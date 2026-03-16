@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HC Hex Grid — Interactive Explorer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Serif+Display&family=Source+Sans+3:wght@400;600&display=swap');
+  :root{--bg:#0c1018;--panel:#141c28;--border:#1e2a3a;--text:#c0cee0;--muted:#4a5e78;--accent:#2ea8c8;--gold:#e89020;--teal:#30b8a0;--warm:#f5e8d0}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-serif;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+  .header{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0}
+  .header h1{font-family:'DM Serif Display',serif;font-size:20px;color:var(--warm)}
+  .header .sub{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase}
+  .controls{display:flex;align-items:center;gap:14px;padding:8px 20px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+  .ctrl-group{display:flex;align-items:center;gap:6px}
+  .ctrl-group label{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:1px}
+  .ctrl-group select,.ctrl-group input[type=range],.ctrl-group input[type=number]{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11px;padding:4px 8px;border-radius:4px;cursor:pointer}
+  .ctrl-group input[type=range]{width:90px}
+  .ctrl-group input[type=number]{width:52px;text-align:center}
+  .toggle-btn{font-family:'JetBrains Mono',monospace;font-size:10px;padding:4px 10px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--muted);cursor:pointer;transition:all 0.2s}
+  .toggle-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .toggle-btn:hover{border-color:var(--accent)}
+  .canvas-wrap{flex:1;position:relative;overflow:hidden;cursor:grab}
+  .canvas-wrap:active{cursor:grabbing}
+  canvas{display:block}
+  .info-panel{position:absolute;bottom:16px;left:16px;background:rgba(20,28,40,0.92);border:1px solid var(--border);border-radius:8px;padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;pointer-events:none;opacity:0;transition:opacity 0.15s;min-width:240px;backdrop-filter:blur(8px)}
+  .info-panel.visible{opacity:1}
+  .info-panel .il{color:var(--muted)}.info-panel .iv{color:var(--warm)}.info-panel .ia{color:var(--accent)}
+  .status{display:flex;align-items:center;justify-content:space-between;padding:6px 20px;background:var(--panel);border-top:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);flex-shrink:0}
+  .sep{border-left:1px solid var(--border);padding-left:12px}
+</style>
+</head>
+<body>
+<div class="header">
+  <div><h1>HC Hex Grid</h1><div class="sub">Rectangular Spiral · f(x, c) = 2x² − x + c</div></div>
+  <div style="text-align:right"><div class="sub" id="cellCount"></div></div>
+</div>
+<div class="controls">
+  <div class="ctrl-group"><label>Level</label><input type="range" id="levelSlider" min="2" max="30" value="10"><span id="levelVal" style="font-family:'JetBrains Mono';font-size:11px;color:var(--accent);min-width:24px">10</span></div>
+  <div class="ctrl-group"><label>Labels</label>
+    <select id="labelMode"><option value="num">Spiral #</option><option value="dc">DC(m,c)</option><option value="fval">f(m,c)</option><option value="level">Level</option><option value="none">None</option></select>
+  </div>
+  <div class="ctrl-group">
+    <button class="toggle-btn active" id="togTriangular">▲ Triangular</button>
+    <button class="toggle-btn" id="togMainDiag">Main Diag</button>
+    <button class="toggle-btn" id="togCrossDiag">Cross Diag</button>
+    <button class="toggle-btn" id="togRings">Level Colors</button>
+  </div>
+  <div class="ctrl-group sep">
+    <label>Ray c</label>
+    <input type="number" id="rayC" value="-3">
+    <button class="toggle-btn" id="togRayPath">Ray Path</button>
+  </div>
+  <div class="ctrl-group" style="margin-left:auto"><button class="toggle-btn" id="btnReset">Reset View</button></div>
+</div>
+<div class="canvas-wrap" id="canvasWrap">
+  <canvas id="grid"></canvas>
+  <div class="info-panel" id="infoPanel"></div>
+</div>
+<div class="status">
+  <span id="statusLeft">Scroll to zoom · Drag to pan</span>
+  <span id="statusRight"></span>
+</div>
+<script>
+const HEX_SIZE=22, DIST=Math.sqrt(3)*HEX_SIZE;
+
+function cellToDC(N){
+  if(N===1)return[0,0];
+  let k=Math.floor(Math.sqrt(N/2));
+  while(2*k*k>N)k--;while(2*(k+1)*(k+1)<=N)k++;
+  const A1=2*k*k,A2=A1+k,A3=A1+2*k+1,A4=A1+3*k+1;
+  if(N===A1)return[0,k];
+  if(N<=A2){const j=N-A1;return[j,k-j]}
+  if(N<=A3){const j=N-A2;if(j===1)return[k,-1];if(j<=k)return[k-j+1,-j];return[0,-k]}
+  if(N<=A4){const j=N-A3;return[-j,-k+j]}
+  const j=N-A4;if(j===1)return[-k,1];return[-k+j-1,j];
+}
+
+const MBX=DIST*Math.cos(120*Math.PI/180),MBY=-DIST*Math.sin(120*Math.PI/180);
+const CBX=DIST*Math.cos(60*Math.PI/180),CBY=-DIST*Math.sin(60*Math.PI/180);
+function dcToPixel(m,c){return{x:m*MBX+c*CBX,y:m*MBY+c*CBY}}
+
+function cellLevel(N){if(N===1)return 0;let k=Math.floor(Math.sqrt(N/2));while(2*k*k>N)k--;while(2*(k+1)*(k+1)<=N)k++;return k}
+function isTriangular(n){if(n<1)return false;const d=8*n+1,s=Math.round(Math.sqrt(d));return s*s===d}
+
+// Maelstrom bounds for ray c: floor(root1)-1 to ceil(root2)+1
+// Roots of 2x²-x+c=0: x=(1±√(1-8c))/4
+function getMaelstromBounds(cVal){
+  const disc=1-8*cVal;
+  if(disc<0)return null;
+  const sq=Math.sqrt(disc);
+  const r1=(1-sq)/4, r2=(1+sq)/4;
+  let ms=Math.floor(r1)-1, me=Math.ceil(r2)+1;
+  if(r1===Math.floor(r1))ms=r1-1;
+  if(r2===Math.ceil(r2))me=r2+1;
+  return[ms,me];
+}
+function isMaelstromCell(m,cVal){
+  const b=getMaelstromBounds(cVal);
+  return b?m>=b[0]&&m<=b[1]:false;
+}
+
+function buildGrid(maxLevel){
+  const total=2*maxLevel*maxLevel+3*maxLevel+1, cells=[];
+  for(let n=1;n<=total;n++){
+    const[m,c]=cellToDC(n),pos=dcToPixel(m,c);
+    cells.push({num:n,px:pos.x,py:pos.y,m,c,level:cellLevel(n),isTriangular:isTriangular(n),isMainDiag:c===0,isCrossDiag:m===0});
+  }
+  return cells;
+}
+
+// ═══════════ RENDERING ═══════════
+const canvas=document.getElementById('grid'),ctx=canvas.getContext('2d');
+const wrap=document.getElementById('canvasWrap'),infoPanel=document.getElementById('infoPanel');
+let cells=[],level=10;
+let viewX=0,viewY=0,zoom=1;
+let dragging=false,dragStartX,dragStartY,dragViewX,dragViewY;
+let hoverCell=null;
+const toggles={triangular:true,mainDiag:false,crossDiag:false,rings:false,rayPath:false};
+let selectedRayC=-3;
+
+// Ray path: cells whose spiral number = f(x, selectedRayC) for some integer x
+// Precompute the set when ray changes
+let rayPathCells = new Set();
+let rayMaelstromCells = new Set(); // cells in the maelstrom boundary zone
+
+function computeRayPath() {
+  rayPathCells.clear();
+  rayMaelstromCells.clear();
+  rayMaelstromZero = false;
+  const c = selectedRayC;
+  if (c >= 0) {
+    // For c >= 0, no maelstrom; just compute path
+    for (let x = -50; x <= 50; x++) {
+      const fval = 2*x*x - x + c;
+      if (fval > 0) rayPathCells.add(fval);
+    }
+    return;
+  }
+  // For c < 0:
+  // Cross Diagonal entry at x = c, exit at x = -c + 1
+  // Maelstrom = x from c+1 to -c (between the Cross Diag crossings)
+  const entryX = c;
+  const exitX = -c + 1;
+  for (let x = -50; x <= 50; x++) {
+    const fval = 2*x*x - x + c;
+    const inMael = x > entryX && x < exitX;
+    if (fval > 0) {
+      rayPathCells.add(fval);
+      if (inMael) rayMaelstromCells.add(fval);
+    } else if (fval === 0) {
+      // f=0 -> origin, mark as maelstrom
+      rayPathCells.add(1);
+      if (inMael) { rayMaelstromCells.add(1); rayMaelstromZero = true; }
+    } else {
+      // Negative: use absolute value
+      const absF = Math.abs(fval);
+      if (absF >= 1) {
+        rayPathCells.add(absF);
+        if (inMael) rayMaelstromCells.add(absF);
+      }
+    }
+  }
+}
+let rayMaelstromZero = false;
+computeRayPath();
+
+const lvColors=['#e89020','#2288bb','#2a8a50','#8855aa','#cc4455','#4488cc','#55aa44','#aa6633','#cc6699','#3399aa','#aa8844','#6677bb','#44aa88','#bb5577','#5599bb','#88aa33','#aa5544','#6688aa','#44bb99','#9966aa','#bb7744','#5588cc','#77aa55','#aa4466','#4499aa','#99aa44','#bb6655','#5577bb','#44aa77','#aa5588'];
+
+function lighten(hex,a){let r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);r=Math.min(255,r+((255-r)*a|0));g=Math.min(255,g+((255-g)*a|0));b=Math.min(255,b+((255-b)*a|0));return`rgb(${r},${g},${b})`}
+
+function cellFill(c){
+  if(toggles.rayPath&&c.num===1&&rayMaelstromZero)return'#3a1050';
+  if(toggles.rayPath&&c.num!==1&&rayMaelstromCells.has(c.num))return'#3a1050';
+  if(c.num===1)return'#c87000';
+  if(toggles.rayPath&&rayPathCells.has(c.num))return'#1a3a5a';
+  if(toggles.rings)return lvColors[c.level%lvColors.length];
+  if(toggles.mainDiag&&c.isMainDiag)return'#0e5a5a';
+  if(toggles.crossDiag&&c.isCrossDiag)return'#5a3a0e';
+  if(toggles.triangular&&c.isTriangular)return'#0a5858';
+  const t=Math.min(c.level/20,1);return`rgb(${14+t*8|0},${22+t*10|0},${38+t*12|0})`;
+}
+function cellStroke(c){
+  if(toggles.rayPath&&c.num===1&&rayMaelstromZero)return'#9060c0';
+  if(toggles.rayPath&&c.num!==1&&rayMaelstromCells.has(c.num))return'#9060c0';
+  if(c.num===1)return'#ffc050';
+  if(toggles.rayPath&&rayPathCells.has(c.num))return'#4080b0';
+  if(toggles.triangular&&c.isTriangular)return'#30c0a0';
+  if(toggles.mainDiag&&c.isMainDiag)return'#20a0a0';
+  if(toggles.crossDiag&&c.isCrossDiag)return'#d09030';
+  if(toggles.rings)return lighten(lvColors[c.level%lvColors.length],0.3);
+  return'#1e3050';
+}
+function cellText(c){
+  if(toggles.rayPath&&c.num===1&&rayMaelstromZero)return'#d0a0f0';
+  if(toggles.rayPath&&c.num!==1&&rayMaelstromCells.has(c.num))return'#d0a0f0';
+  if(c.num===1)return'#fff4e0';
+  if(toggles.rayPath&&rayPathCells.has(c.num))return'#90c8e8';
+  if(toggles.triangular&&c.isTriangular)return'#90eed8';
+  if(toggles.mainDiag&&c.isMainDiag)return'#80e0e0';
+  if(toggles.crossDiag&&c.isCrossDiag)return'#f0c070';
+  if(toggles.rings)return'#e8e0d4';
+  return'#506880';
+}
+
+function drawHex(cx,cy,sz,fill,stroke,label,tc,fs){
+  ctx.beginPath();for(let i=0;i<6;i++){const a=(60*i+30)*Math.PI/180,vx=cx+sz*Math.cos(a),vy=cy-sz*Math.sin(a);i===0?ctx.moveTo(vx,vy):ctx.lineTo(vx,vy)}
+  ctx.closePath();ctx.fillStyle=fill;ctx.fill();ctx.strokeStyle=stroke;ctx.lineWidth=Math.max(0.5,1.2/zoom);ctx.stroke();
+  if(label&&fs*zoom>4){ctx.fillStyle=tc;ctx.font=`600 ${fs}px 'JetBrains Mono'`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,cx,cy+0.5)}
+}
+
+function getLabel(c){
+  if(toggles.rayPath&&c.num===1&&rayMaelstromZero)return'0';
+  const m=document.getElementById('labelMode').value;
+  if(m==='num')return String(c.num);if(m==='dc')return`${c.m},${c.c}`;
+  if(m==='fval')return String(2*c.m*c.m-c.m+c.c);if(m==='level')return String(c.level);return'';
+}
+function labelFS(c){const l=getLabel(c).length;if(l<=2)return HEX_SIZE*0.7;if(l<=3)return HEX_SIZE*0.58;if(l<=4)return HEX_SIZE*0.48;if(l<=5)return HEX_SIZE*0.40;return HEX_SIZE*0.34}
+
+function render(){
+  const W=wrap.clientWidth,H=wrap.clientHeight;canvas.width=W;canvas.height=H;
+  ctx.fillStyle='#0c1018';ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.translate(W/2+viewX,H/2+viewY);ctx.scale(zoom,zoom);
+  const iz=1/zoom,pad=HEX_SIZE*2;
+  const vl=(-W/2-viewX)*iz,vr=(W/2-viewX)*iz,vt=(-H/2-viewY)*iz,vb=(H/2-viewY)*iz;
+  for(const c of cells){
+    if(c.px<vl-pad||c.px>vr+pad||c.py<vt-pad||c.py>vb+pad)continue;
+    const h=hoverCell&&hoverCell.num===c.num;
+    drawHex(c.px,c.py,HEX_SIZE-1,h?'#304060':cellFill(c),h?'#60a0e0':cellStroke(c),getLabel(c),h?'#ffffff':cellText(c),labelFS(c));
+    if(h)drawHex(c.px,c.py,HEX_SIZE+1,'transparent','#60a0e0','','',0);
+  }
+  ctx.restore();
+  document.getElementById('statusRight').textContent=`Zoom: ${zoom.toFixed(2)}x · ${cells.length} cells`;
+}
+
+// ═══════════ INTERACTION ═══════════
+wrap.addEventListener('wheel',(e)=>{e.preventDefault();const f=e.deltaY>0?0.9:1.1,nz=Math.max(0.08,Math.min(12,zoom*f));const r=wrap.getBoundingClientRect(),mx=e.clientX-r.left-r.width/2,my=e.clientY-r.top-r.height/2;viewX=mx-(mx-viewX)*(nz/zoom);viewY=my-(my-viewY)*(nz/zoom);zoom=nz;render()},{passive:false});
+wrap.addEventListener('mousedown',(e)=>{dragging=true;dragStartX=e.clientX;dragStartY=e.clientY;dragViewX=viewX;dragViewY=viewY});
+window.addEventListener('mousemove',(e)=>{
+  if(dragging){viewX=dragViewX+(e.clientX-dragStartX);viewY=dragViewY+(e.clientY-dragStartY);render()}
+  const r=wrap.getBoundingClientRect(),mx=(e.clientX-r.left-r.width/2-viewX)/zoom,my=(e.clientY-r.top-r.height/2-viewY)/zoom;
+  let cl=null,cd=HEX_SIZE*0.95;for(const c of cells){const dx=mx-c.px,dy=my-c.py,d=Math.sqrt(dx*dx+dy*dy);if(d<cd){cl=c;cd=d}}
+  if(cl!==hoverCell){hoverCell=cl;updateInfoPanel();if(!dragging)render()}
+});
+window.addEventListener('mouseup',()=>{dragging=false});
+let lastTD=0;
+wrap.addEventListener('touchstart',(e)=>{if(e.touches.length===1){dragging=true;dragStartX=e.touches[0].clientX;dragStartY=e.touches[0].clientY;dragViewX=viewX;dragViewY=viewY}else if(e.touches.length===2){lastTD=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY)}e.preventDefault()},{passive:false});
+wrap.addEventListener('touchmove',(e)=>{if(e.touches.length===1&&dragging){viewX=dragViewX+(e.touches[0].clientX-dragStartX);viewY=dragViewY+(e.touches[0].clientY-dragStartY);render()}else if(e.touches.length===2){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);if(lastTD>0){zoom=Math.max(0.08,Math.min(12,zoom*(d/lastTD)));render()}lastTD=d}e.preventDefault()},{passive:false});
+wrap.addEventListener('touchend',()=>{dragging=false;lastTD=0});
+
+function updateInfoPanel(){
+  if(!hoverCell){infoPanel.classList.remove('visible');return}
+  const c=hoverCell,fv=2*c.m*c.m-c.m+c.c;
+  let h=`<div><span class="il">Cell </span><span class="iv">${c.num}</span></div>`;
+  h+=`<div><span class="il">DC </span><span class="ia">(${c.m}, ${c.c})</span></div>`;
+  h+=`<div><span class="il">f(${c.m}, ${c.c}) = </span><span class="iv">${fv}</span></div>`;
+  h+=`<div><span class="il">Level </span><span class="iv">${c.level}</span></div>`;
+  const tags=[];
+  if(c.isTriangular)tags.push('<span style="color:#30b8a0">▲ Triangular</span>');
+  if(c.isMainDiag)tags.push('<span style="color:#20a0a0">Main Diagonal</span>');
+  if(c.isCrossDiag)tags.push('<span style="color:#d09030">Cross Diagonal</span>');
+  if(rayMaelstromCells.has(c.num))tags.push('<span style="color:#b080e0">Maelstrom (c='+selectedRayC+')</span>');
+  if(rayPathCells.has(c.num)&&!rayMaelstromCells.has(c.num))tags.push('<span style="color:#4080b0">Ray c='+selectedRayC+'</span>');
+  if(tags.length)h+=`<div style="margin-top:4px">${tags.join(' · ')}</div>`;
+  infoPanel.innerHTML=h;infoPanel.classList.add('visible');
+}
+
+function setupToggle(id,key){const b=document.getElementById(id);b.addEventListener('click',()=>{toggles[key]=!toggles[key];b.classList.toggle('active',toggles[key]);render()});b.classList.toggle('active',toggles[key])}
+setupToggle('togTriangular','triangular');
+setupToggle('togMainDiag','mainDiag');
+setupToggle('togCrossDiag','crossDiag');
+setupToggle('togRings','rings');
+setupToggle('togRayPath','rayPath');
+document.getElementById('rayC').addEventListener('change',function(){selectedRayC=parseInt(this.value)||0;computeRayPath();render()});
+document.getElementById('rayC').addEventListener('input',function(){selectedRayC=parseInt(this.value)||0;computeRayPath();if(toggles.rayPath)render()});
+document.getElementById('labelMode').addEventListener('change',render);
+document.getElementById('btnReset').addEventListener('click',()=>{viewX=0;viewY=0;zoom=1;render()});
+const levelSlider=document.getElementById('levelSlider'),levelValEl=document.getElementById('levelVal');
+levelSlider.addEventListener('input',()=>{level=parseInt(levelSlider.value);levelValEl.textContent=level;rebuildGrid()});
+function rebuildGrid(){cells=buildGrid(level);document.getElementById('cellCount').textContent=`${cells.length} cells · Level ${level}`;render()}
+window.addEventListener('resize',render);
+rebuildGrid();
+</script>
+</body>
+</html>
